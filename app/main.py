@@ -46,24 +46,22 @@ import tempfile
 import subprocess
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import FileResponse
+from fastapi import BackgroundTasks
 
 app = FastAPI()
 
 @app.post("/convert-to-pdf")
-async def convert_to_pdf(file: UploadFile = File(...)):
+async def convert_to_pdf(file: UploadFile = File(...), background_tasks: BackgroundTasks = None):
     if not file.filename.endswith(".docx"):
         raise HTTPException(status_code=400, detail="File harus .docx")
 
-    # Simpan DOCX ke temporary file
     with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_docx:
         tmp_docx.write(await file.read())
         tmp_docx_path = tmp_docx.name
 
-    # Tentukan path PDF output
     tmp_pdf_path = tmp_docx_path.replace(".docx", ".pdf")
 
     try:
-        # Convert DOCX -> PDF dengan LibreOffice
         subprocess.run([
             "soffice",
             "--headless",
@@ -72,22 +70,22 @@ async def convert_to_pdf(file: UploadFile = File(...)):
             tmp_docx_path
         ], check=True)
 
-        # Pastikan PDF berhasil dibuat
         if not os.path.exists(tmp_pdf_path):
             raise HTTPException(status_code=500, detail="Gagal membuat PDF")
 
-        # Kirimkan file PDF ke user
+        # Tambahkan background job untuk hapus file
+        background_tasks.add_task(cleanup_files, [tmp_docx_path, tmp_pdf_path])
+
         return FileResponse(
             tmp_pdf_path,
             media_type="application/pdf",
             filename="converted.pdf",
-            background=lambda: cleanup_files([tmp_docx_path, tmp_pdf_path])
+            background=background_tasks
         )
 
     except Exception as e:
         cleanup_files([tmp_docx_path])
         raise HTTPException(status_code=500, detail=str(e))
-
 
 def cleanup_files(paths):
     for path in paths:
